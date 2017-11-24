@@ -1,0 +1,89 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "John Datovech"
+date: "November 17, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.width=6, fig.height=4)
+if(!require(caret)) install.packages("caret",repos = "http://cran.us.r-project.org")
+library(caret)
+```
+
+#### Executive Summary
+According to information provided by the authors of the original study(1) on human activity recognition that generated the data I used for this project, six young healthy participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E). Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes.  The training data set provided for training the model has 19,622 rows and 160 columns.  Each row is a data point of accelerometer measurements taken while the exercises were being performed.  The final column in the data set, named "classe," designates which way the bicep curl was performed (class A, B, C, D or E). In my analysis, I partitioned the training data set into training and testing sets so I could develop an estimate of out-of-sample error before I had to apply my model to the 20 test cases that were downloaded separately.  I also reduced the number of potential predictor variables from 159 to 16 (which I call the "vital few" predictors) by eliminating: 1) columns of data that did not contain measurements taken by the accelerometers 2) variables that had "NA" values in some rows, 3) variables that had "near zero" variance, and 4) variables that were correlated to other variables in the data set.  For training my model, I chose to use a random forest technique, since this is well-suited for classification models and is often one of the most accurate modeling techinques used in modeling contests.  When I applied the resulting model the testing data I partitioned from the training set, I found the 95% confidence interval of the out-of-sample accuracy to be 0.9537 - 0.9650, or roughly 96%.  
+
+#### Getting the Data
+```{r}
+train<-read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+test<-read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
+```
+
+####Exploratory Data Analysis
+```{r}
+str(train)
+```
+
+From this summary of the data, I see there are quite a few variables (159 potential predictor variables and the "class" of how the bicep curl was executed).  To make the problem tractable, I want to reduce the number of variables to the few, key predictors.  From the summary of the data, I also see that quite a few variables have "NA" values.  So, one way to reduce the number of predictors is to eliminate those variables that have "NA" values. A the same time, I can also eliminate the first seven columns of data from the list of potential predictors, because these columns do not contain movement data collected from the motion sensors, but rather data about the people involved in the testing and the time of the testing. 
+
+####Cleaning the Data
+```{r}
+col.has.na <- apply(train, 2, function(x){any(is.na(x))})
+train<- train[,!col.has.na]
+train<-train[,c(-1,-2,-3,-4,-5,-6,-7)]
+test<-test[,c(-1,-2,-3,-4,-5,-6,-7)]
+```
+
+
+####Modeling
+For modeling, I first partition the cleaned data into training and testing sets.
+```{r}
+set.seed(12345)
+inTrain<-createDataPartition(y=train$classe,p=0.75,list=FALSE)
+training<-train[inTrain,]
+testing<-train[-inTrain,]
+dim(training)
+```
+Unfortunately, even after removing the potential predictors that had "NA" values, there are still too many variables (85 predictors plus the exercise class) in the training set to be practical.  So, I apply two additional techniques to reduce the number of variables to the "vital few" needed to create a reasonably accurate model.  First, I eliminate variables with a variance "near zero."  
+```{r}
+remove_cols <- nearZeroVar(training,freqCut = 2,uniqueCut = 20)
+train2<-training[,-remove_cols]
+dim(train2)
+```
+Removing variables with "near zero" variance reduces the number of predictors to 46.  So, now I apply the second technique.  Namely, I eliminate variables that are highly correlated to others already in the data set. 
+```{r}
+train3<-train2[,-47]
+highlycordesc<-findCorrelation(cor(train3),cutoff = 0.5,verbose=FALSE)
+train4<-train3[,-highlycordesc]
+dim(train4)
+```
+This reduces the number of predictor variables to 16, which, although still large, is about an order of magnitude less than the number with which I began.  The names of the vital few variables are listed here.
+```{r}
+names(train4)
+```
+So, I now use these remaining "vital few" predictors to build a model using the random forest method, since this method is well suited for classifying a group of input data into output classification groups.  Note that, even with the significant reduction in predictor variables, it still takes my computer more than few minutes to train the model.
+```{r}
+train5<-cbind(train4,train2[47])
+test2<-testing[,-remove_cols]
+test3<-test2[,-highlycordesc]
+modrf<-train(classe~.,data=train5,method="rf")
+modrf
+```
+Using the model, I can predict which form of the bicep curl was being performed for each data point in the testing partition of the training data set, and then compare this prediction to what the actual form was.  
+```{r}
+predRF<-predict(modrf,test3)
+table(predRF,test3$classe)
+confusionMatrix(test3$classe,predRF)
+```
+From the confusion matrix that compares the predicted with the actual, I see the 95% confidence interval of the out-of-sample accuracy is around 96% (0.9537, 0.965). Since a passing grade on the quiz that will be taken using this model is 80%, I am confident this random forest model will be sufficiently accurate.  The answers to the quiz from the model are:
+```{r}
+predTest<-predict(modrf,test)
+predTest
+```
+
+Reference
+(1)Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6. 
+
+
